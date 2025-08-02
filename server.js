@@ -64,7 +64,7 @@ const allowedOrigins = [
 
   // Para apps móviles con protocolos personalizados de QuizBible
   'quizbible://',
-  'com.quizbible.app://', // Ajusta esto según tu bundle ID en iOS/Android
+  'com.moreno.dev.QuizBible://', //bundle ID en iOS/Android
 
   // Para tu dominio de producción en Railway
   'https://web-production-b4576.up.railway.app', // Ajusta esto a tu dominio en Railway
@@ -73,9 +73,8 @@ const allowedOrigins = [
   ...(NODE_ENV === 'development' ? [
     'http://localhost:3000',
     'http://localhost:8100',
-    'http://192.168.100.129:3000', // michel ip 
+    'http://192.168.100.129:3000',
     'http://192.168.100.129:8100',
-    'http://192.168.1.9:3000', // vere ip
     'https://web-production-b4576.up.railway.app'
   ] : [])
 ];
@@ -92,7 +91,7 @@ const corsOptions = {
     if (NODE_ENV === 'production') {
       if (allowedOrigins.includes(origin) ||
         origin.startsWith('quizbible://') ||
-        origin.startsWith('com.quizbible.app://')) {
+        origin.startsWith('com.moreno.dev.QuizBible://')) {
         return callback(null, true);
       }
     } else {
@@ -320,21 +319,58 @@ app.use((req, res, next) => {
 
 // 🔒 SOCKET.IO CON SEGURIDAD MEJORADA PARA APPS MÓVILES
 const io = socketIo(server, {
-  cors: corsOptions,
-  pingTimeout: isProduction ? 30000 : 45000, // Más agresivo en producción
+  cors: {
+    origin: function (origin, callback) {
+      // Permitir requests sin origin (apps móviles nativas)
+      if (!origin) {
+        console.log('✅ [SOCKET.IO] Request sin origin permitido (app móvil nativa)');
+        return callback(null, true);
+      }
+
+      // En producción, ser estricto con los orígenes permitidos
+      if (NODE_ENV === 'production') {
+        if (allowedOrigins.includes(origin) ||
+          origin.startsWith('quizbible://') ||
+          origin.startsWith('com.moreno.dev.QuizBible://')) {
+          console.log(`✅ [SOCKET.IO] Origin permitido en producción: ${origin}`);
+          return callback(null, true);
+        }
+      } else {
+        // En desarrollo, ser más permisivo
+        if (allowedOrigins.includes(origin) ||
+          origin.includes('localhost') ||
+          origin.includes('192.168.')) {
+          console.log(`✅ [SOCKET.IO] Origin permitido en desarrollo: ${origin}`);
+          return callback(null, true);
+        }
+      }
+
+      console.log(`🚫 [SOCKET.IO] Origin bloqueado: ${origin}`);
+      callback(new Error('No permitido por CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  },
+  pingTimeout: isProduction ? 30000 : 45000,
   pingInterval: isProduction ? 15000 : 20000,
   transports: ['websocket', 'polling'],
   allowEIO3: false,
-  maxHttpBufferSize: isProduction ? 500000 : 1000000, // Reducir buffer en producción
+  maxHttpBufferSize: isProduction ? 500000 : 1000000,
   allowRequest: (req, callback) => {
-    // Verificar límites antes de permitir conexión
-    if (gameRooms.size >= RAILWAY_LIMITS.MAX_ROOMS) {
-      logger.warn(`🚫 Servidor lleno: ${gameRooms.size} salas`);
-      return callback('Servidor temporalmente lleno', false);
-    }
-
+    const clientIp = req.headers['x-forwarded-for'] || req.ip;
     const origin = req.headers.origin;
     const userAgent = req.headers['user-agent'];
+    
+    console.log(`🔍 [SOCKET.IO] Intento de conexión desde IP: ${clientIp}`);
+    console.log(` [SOCKET.IO] Origin: ${origin || 'SIN ORIGIN'}`);
+    console.log(` [SOCKET.IO] User-Agent: ${userAgent || 'SIN USER-AGENT'}`);
+    
+    // Verificar límites antes de permitir conexión
+    if (gameRooms.size >= RAILWAY_LIMITS.MAX_ROOMS) {
+      console.log(`🚫 [SOCKET.IO] Servidor lleno: ${gameRooms.size} salas`);
+      return callback('Servidor temporalmente lleno', false);
+    }
 
     // Bloquear user agents sospechosos
     if (userAgent && (
@@ -342,24 +378,36 @@ const io = socketIo(server, {
       userAgent.includes('crawler') ||
       userAgent.includes('scraper')
     )) {
-      console.log(`🚫 User agent bloqueado: ${userAgent}`);
+      console.log(`🚫 [SOCKET.IO] User agent bloqueado: ${userAgent}`);
       return callback(null, false);
     }
 
     // Permitir conexiones de apps móviles nativas
     if (!origin) {
-      console.log('✅ Socket.IO: Request sin origin permitido (app móvil nativa)');
+      console.log('✅ [SOCKET.IO] Request sin origin permitido (app móvil nativa)');
       return callback(null, true);
     }
 
     // Usar la misma lógica de CORS que para HTTP
-    corsOptions.origin(origin, (err, allowed) => {
-      if (err || !allowed) {
-        callback(null, false);
-      } else {
-        callback(null, true);
+    if (NODE_ENV === 'production') {
+      if (allowedOrigins.includes(origin) ||
+        origin.startsWith('quizbible://') ||
+        origin.startsWith('com.moreno.dev.QuizBible://')) {
+        console.log(`✅ [SOCKET.IO] Conexión permitida para origin: ${origin}`);
+        return callback(null, true);
       }
-    });
+    } else {
+      // En desarrollo, ser más permisivo
+      if (allowedOrigins.includes(origin) ||
+        origin.includes('localhost') ||
+        origin.includes('192.168.')) {
+        console.log(`✅ [SOCKET.IO] Conexión permitida para origin: ${origin}`);
+        return callback(null, true);
+      }
+    }
+
+    console.log(`🚫 [SOCKET.IO] CORS bloqueado para origin: ${origin}`);
+    callback(null, false);
   }
 });
 
@@ -367,25 +415,42 @@ const io = socketIo(server, {
 io.use((socket, next) => {
   const clientIp = socket.handshake.address;
   const userAgent = socket.handshake.headers['user-agent'];
+  const origin = socket.handshake.headers.origin;
 
-  // Validar user agent
-  if (!userAgent || userAgent.length < 10) {
+  console.log(`🔌 [SOCKET] Nueva conexión desde IP: ${clientIp}`);
+  console.log(`🔌 [SOCKET] User-Agent: ${userAgent || 'SIN USER-AGENT'}`);
+  console.log(`🔌 [SOCKET] Origin: ${origin || 'SIN ORIGIN'}`);
+
+  // Validar user agent - ser más permisivo para apps móviles
+  if (!userAgent) {
+    console.log(`⚠️ [SOCKET] User agent vacío, pero permitiendo conexión`);
+    // No bloquear si no hay user agent (apps móviles nativas)
+  } else if (userAgent.length < 5) {
+    console.log(`🚫 [SOCKET] User agent muy corto: ${userAgent}`);
     return next(new Error('User agent inválido'));
   }
 
   // Rate limiting para sockets
   const currentCount = connectionCount.get(clientIp) || 0;
+  console.log(`📊 [SOCKET] Conexiones actuales para IP ${clientIp}: ${currentCount}`);
+  
   if (currentCount >= MAX_CONNECTIONS_PER_IP) {
+    console.log(`🚫 [SOCKET] Demasiadas conexiones desde IP: ${clientIp} (${currentCount}/${MAX_CONNECTIONS_PER_IP})`);
     return next(new Error('Demasiadas conexiones desde esta IP'));
   }
 
   connectionCount.set(clientIp, currentCount + 1);
-  socket.on('disconnect', () => {
+  console.log(`✅ [SOCKET] Conexión aceptada para IP: ${clientIp} (${currentCount + 1}/${MAX_CONNECTIONS_PER_IP})`);
+  
+  socket.on('disconnect', (reason) => {
+    console.log(`🔌 [SOCKET] Desconexión desde IP: ${clientIp}, razón: ${reason}`);
     const newCount = connectionCount.get(clientIp) - 1;
     if (newCount <= 0) {
       connectionCount.delete(clientIp);
+      console.log(`🧹 [SOCKET] IP ${clientIp} removida del contador`);
     } else {
       connectionCount.set(clientIp, newCount);
+      console.log(`📊 [SOCKET] Conexiones restantes para IP ${clientIp}: ${newCount}`);
     }
   });
 
@@ -1341,4 +1406,32 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
   console.log(`📡 Socket.IO habilitado`);
-})
+});
+
+// Ruta para monitoreo de conexiones
+app.get('/monitor', (req, res) => {
+  const connections = Array.from(connectionCount.entries()).map(([ip, count]) => ({
+    ip,
+    connections: count
+  }));
+  
+  res.json({
+    totalConnections: Array.from(connectionCount.values()).reduce((a, b) => a + b, 0),
+    uniqueIPs: connectionCount.size,
+    connections: connections,
+    gameRooms: gameRooms.size,
+    serverStatus: 'running'
+  });
+});
+
+// Ruta para limpiar conexiones (solo en desarrollo)
+if (isDevelopment) {
+  app.get('/debug/clear-connections', (req, res) => {
+    const clearedCount = connectionCount.size;
+    connectionCount.clear();
+    res.json({
+      message: `Limpieza completada`,
+      clearedConnections: clearedCount
+    });
+  });
+}

@@ -7,7 +7,7 @@ const rateLimit = require('express-rate-limit');
 const compression = require('compression');
 
 // Configuración de variables de entorno
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080; // Railway usa puerto 8080 por defecto
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const MAX_CONNECTIONS_PER_IP = 75;
 
@@ -43,7 +43,7 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "wss:", "ws:"],
+      connectSrc: ["'self'", "wss:", "ws:", "https://web-production-b4576.up.railway.app"],
       fontSrc: ["'self'"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'"],
@@ -79,6 +79,11 @@ const allowedOrigins = [
   ] : [])
 ];
 
+// Agregar el dominio de Railway a los orígenes permitidos en producción también
+if (NODE_ENV === 'production') {
+  allowedOrigins.push('https://web-production-b4576.up.railway.app');
+}
+
 const corsOptions = {
   origin: function (origin, callback) {
     // Permitir requests sin origin (apps móviles nativas)
@@ -87,22 +92,31 @@ const corsOptions = {
       return callback(null, true);
     }
 
+    // Log para debugging
+    console.log(`🔍 [CORS] Origin recibido: ${origin}`);
+    console.log(`🔍 [CORS] Orígenes permitidos:`, allowedOrigins);
+
     // En producción, ser estricto con los orígenes permitidos
     if (NODE_ENV === 'production') {
       if (allowedOrigins.includes(origin) ||
         origin.startsWith('quizbible://') ||
-        origin.startsWith('com.moreno.dev.QuizBible://')) {
+        origin.startsWith('com.moreno.dev.QuizBible://') ||
+        origin.includes('web-production-b4576.up.railway.app')) {
+        console.log(`✅ [CORS] Origin permitido en producción: ${origin}`);
         return callback(null, true);
       }
     } else {
       // En desarrollo, ser más permisivo
       if (allowedOrigins.includes(origin) ||
         origin.includes('localhost') ||
-        origin.includes('192.168.')) {
+        origin.includes('192.168.') ||
+        origin.includes('web-production-b4576.up.railway.app')) {
+        console.log(`✅ [CORS] Origin permitido en desarrollo: ${origin}`);
         return callback(null, true);
       }
     }
 
+    console.log(`🚫 [CORS] Origin bloqueado: ${origin}`);
     callback(new Error('No permitido por CORS'));
   },
   credentials: true,
@@ -327,11 +341,15 @@ const io = socketIo(server, {
         return callback(null, true);
       }
 
+      // Log para debugging
+      console.log(`🔍 [SOCKET.IO] Origin recibido: ${origin}`);
+
       // En producción, ser estricto con los orígenes permitidos
       if (NODE_ENV === 'production') {
         if (allowedOrigins.includes(origin) ||
           origin.startsWith('quizbible://') ||
-          origin.startsWith('com.moreno.dev.QuizBible://')) {
+          origin.startsWith('com.moreno.dev.QuizBible://') ||
+          origin.includes('web-production-b4576.up.railway.app')) {
           console.log(`✅ [SOCKET.IO] Origin permitido en producción: ${origin}`);
           return callback(null, true);
         }
@@ -339,7 +357,8 @@ const io = socketIo(server, {
         // En desarrollo, ser más permisivo
         if (allowedOrigins.includes(origin) ||
           origin.includes('localhost') ||
-          origin.includes('192.168.')) {
+          origin.includes('192.168.') ||
+          origin.includes('web-production-b4576.up.railway.app')) {
           console.log(`✅ [SOCKET.IO] Origin permitido en desarrollo: ${origin}`);
           return callback(null, true);
         }
@@ -392,7 +411,8 @@ const io = socketIo(server, {
     if (NODE_ENV === 'production') {
       if (allowedOrigins.includes(origin) ||
         origin.startsWith('quizbible://') ||
-        origin.startsWith('com.moreno.dev.QuizBible://')) {
+        origin.startsWith('com.moreno.dev.QuizBible://') ||
+        origin.includes('web-production-b4576.up.railway.app')) {
         console.log(`✅ [SOCKET.IO] Conexión permitida para origin: ${origin}`);
         return callback(null, true);
       }
@@ -400,7 +420,8 @@ const io = socketIo(server, {
       // En desarrollo, ser más permisivo
       if (allowedOrigins.includes(origin) ||
         origin.includes('localhost') ||
-        origin.includes('192.168.')) {
+        origin.includes('192.168.') ||
+        origin.includes('web-production-b4576.up.railway.app')) {
         console.log(`✅ [SOCKET.IO] Conexión permitida para origin: ${origin}`);
         return callback(null, true);
       }
@@ -467,6 +488,17 @@ app.get('/test', (req, res) => {
   res.json({
     success: true,
     data: 'Todo bien'
+  });
+});
+
+// Ruta específica para verificar CORS
+app.get('/cors-test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'CORS funcionando correctamente',
+    timestamp: new Date().toISOString(),
+    environment: NODE_ENV,
+    allowedOrigins: allowedOrigins
   });
 });
 

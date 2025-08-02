@@ -73,8 +73,10 @@ const allowedOrigins = [
   ...(NODE_ENV === 'development' ? [
     'http://localhost:3000',
     'http://localhost:8100',
-    'http://192.168.100.129:3000',
-    'http://192.168.100.129:8100'
+    'http://192.168.100.129:3000', // michel ip 
+    'http://192.168.100.129:8100',
+    'http://192.168.1.9:3000', // vere ip
+    'https://web-production-b4576.up.railway.app'
   ] : [])
 ];
 
